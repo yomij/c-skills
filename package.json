@@ -1,6 +1,6 @@
 {
   "name": "c-skills",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Install bundled Codex skills or fetch them from GitHub via npx.",
   "license": "MIT",
   "bin": {
