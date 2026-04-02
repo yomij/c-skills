@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-# 这个脚本用于创建可复用的多账号 Codex 根目录，目标是把最容易出错的部分
-# 统一收口：独立的 CODEX_HOME 目录、一致的包装脚本，以及可选的 shell 注入。
+# 这个脚本用于创建可复用的多账号 Codex 根目录。
+# 对外只暴露一个入口命令：codex-with <名称>。
 
 usage() {
   cat <<'EOF'
@@ -59,26 +59,72 @@ personality = "pragmatic"
 EOF
 }
 
-write_script_codex_account() {
-  cat > "$ROOT/bin/codex-account" <<'EOF'
-#!/bin/zsh
+write_codex_with_script() {
+  cat > "$ROOT/bin/codex-with" <<'EOF'
+#!/usr/bin/env bash
 
 set -euo pipefail
 
-BASE_DIR="${0:A:h:h}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+BASE_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 ACCOUNTS_FILE="$BASE_DIR/accounts.tsv"
 
+usage() {
+  cat <<'USAGE'
+用法：
+  codex-with <名称> [codex 参数...]
+  codex-with <名称> -login [codex login 参数...]
+  codex-with <名称> -status
+  codex-with <名称> -logout
+  codex-with <名称> -app [codex app 参数...]
+  codex-with -list
+  codex-with -help
+
+说明：
+  <名称> 必须存在于 accounts.tsv 中。
+  默认行为是用指定账号启动 codex，并自动切换到对应的 CODEX_HOME。
+USAGE
+}
+
+list_accounts() {
+  if [[ ! -f "$ACCOUNTS_FILE" ]]; then
+    echo "未找到账号清单: $ACCOUNTS_FILE" >&2
+    exit 1
+  fi
+
+  awk -F'\t' 'NF >= 2 { printf "%-24s %s\n", $1, $2 }' "$ACCOUNTS_FILE"
+}
+
+resolve_login_mode() {
+  local account="$1"
+  awk -F'\t' -v account="$account" '
+    $1 == account { print $2; found = 1; exit }
+    END { exit(found ? 0 : 1) }
+  ' "$ACCOUNTS_FILE"
+}
+
 if [[ $# -lt 1 ]]; then
-  echo "用法: $(basename "$0") <account> [codex args...]" >&2
+  usage >&2
   exit 1
 fi
+
+case "$1" in
+  -help)
+    usage
+    exit 0
+    ;;
+  -list)
+    list_accounts
+    exit 0
+    ;;
+esac
 
 ACCOUNT="$1"
 shift
 
-if ! awk -F'\t' -v account="$ACCOUNT" '$1 == account { found = 1 } END { exit(found ? 0 : 1) }' "$ACCOUNTS_FILE"; then
+if ! LOGIN_MODE="$(resolve_login_mode "$ACCOUNT")"; then
   echo "未知账号: $ACCOUNT" >&2
-  echo "可用账号请查看 $ACCOUNTS_FILE。" >&2
+  echo "可用账号请执行: codex-with -list" >&2
   exit 1
 fi
 
@@ -89,133 +135,84 @@ if [[ ! -f "$CODEX_HOME/config.toml" ]]; then
   exit 1
 fi
 
-exec codex "$@"
-EOF
-}
-
-write_script_codex_login() {
-  cat > "$ROOT/bin/codex-login" <<'EOF'
-#!/bin/zsh
-
-set -euo pipefail
-
-BASE_DIR="${0:A:h:h}"
-ACCOUNTS_FILE="$BASE_DIR/accounts.tsv"
-
-if [[ $# -lt 1 ]]; then
-  echo "用法: $(basename "$0") <account> [codex login args...]" >&2
-  exit 1
+ACTION="run"
+if [[ $# -gt 0 ]]; then
+  case "$1" in
+    -login)
+      ACTION="login"
+      shift
+      ;;
+    -status)
+      ACTION="status"
+      shift
+      ;;
+    -logout)
+      ACTION="logout"
+      shift
+      ;;
+    -app)
+      ACTION="app"
+      shift
+      ;;
+    -help)
+      usage
+      exit 0
+      ;;
+  esac
 fi
 
-ACCOUNT="$1"
-shift
+case "$ACTION" in
+  run)
+    exec codex "$@"
+    ;;
+  login)
+    if [[ "$LOGIN_MODE" == "api" ]]; then
+      SAFE_ACCOUNT="$(printf '%s' "$ACCOUNT" | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9' '_')"
+      KEY_VAR="OPENAI_API_KEY_${SAFE_ACCOUNT}"
+      KEY_VALUE="${!KEY_VAR:-}"
 
-LOGIN_MODE="$(awk -F'\t' -v account="$ACCOUNT" '$1 == account { print $2 }' "$ACCOUNTS_FILE")"
+      if [[ -z "$KEY_VALUE" ]]; then
+        echo "环境变量 $KEY_VAR 为空或未设置。" >&2
+        echo "请先 export $KEY_VAR，然后重新执行此命令。" >&2
+        exit 1
+      fi
 
-if [[ -z "$LOGIN_MODE" ]]; then
-  echo "未知账号: $ACCOUNT" >&2
-  echo "可用账号请查看 $ACCOUNTS_FILE。" >&2
-  exit 1
-fi
+      printf '%s\n' "$KEY_VALUE" | codex login --with-api-key "$@"
+      exit $?
+    fi
 
-export CODEX_HOME="$BASE_DIR/$ACCOUNT"
-
-if [[ "$LOGIN_MODE" == "api" ]]; then
-  SAFE_ACCOUNT="$(print -r -- "$ACCOUNT" | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9' '_')"
-  KEY_VAR="OPENAI_API_KEY_${SAFE_ACCOUNT}"
-  KEY_VALUE="${(P)KEY_VAR:-}"
-
-  if [[ -z "$KEY_VALUE" ]]; then
-    echo "环境变量 $KEY_VAR 为空或未设置。" >&2
-    echo "请先 export $KEY_VAR，然后重新执行此命令。" >&2
-    exit 1
-  fi
-
-  print -r -- "$KEY_VALUE" | codex login --with-api-key "$@"
-  exit $?
-fi
-
-exec codex login "$@"
-EOF
-}
-
-write_script_simple_passthrough() {
-  local target_name="$1"
-  local codex_subcommand="$2"
-
-  cat > "$ROOT/bin/$target_name" <<EOF
-#!/bin/zsh
-
-set -euo pipefail
-
-BASE_DIR="\${0:A:h:h}"
-ACCOUNTS_FILE="\$BASE_DIR/accounts.tsv"
-
-if [[ \$# -lt 1 ]]; then
-  echo "用法: \$(basename "\$0") <account>${codex_subcommand:+ [args...]}" >&2
-  exit 1
-fi
-
-ACCOUNT="\$1"
-shift
-
-if ! awk -F'\\t' -v account="\$ACCOUNT" '\$1 == account { found = 1 } END { exit(found ? 0 : 1) }' "\$ACCOUNTS_FILE"; then
-  echo "未知账号: \$ACCOUNT" >&2
-  echo "可用账号请查看 \$ACCOUNTS_FILE。" >&2
-  exit 1
-fi
-
-export CODEX_HOME="\$BASE_DIR/\$ACCOUNT"
-
-exec codex ${codex_subcommand} "\$@"
+    exec codex login "$@"
+    ;;
+  status)
+    exec codex login status
+    ;;
+  logout)
+    exec codex logout
+    ;;
+  app)
+    exec codex app "$@"
+    ;;
+esac
 EOF
 }
 
 write_zsh_loader() {
-  {
-    echo '# 由 codex-account-config scaffold_root.sh 生成'
-    echo "export CODEX_ACCOUNTS_ROOT=\"$ROOT\""
-    echo
+  cat > "$ROOT/codex-with.zsh" <<EOF
+# 由 codex-account-config scaffold_root.sh 生成
+export CODEX_ACCOUNTS_ROOT="$ROOT"
 
-    while IFS=$'\t' read -r account login_mode; do
-      if [[ -z "$account" || -z "$login_mode" ]]; then
-        continue
-      fi
-
-      suffix="$(printf '%s' "$account" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '-')"
-
-      cat <<EOF
-codex-$suffix() {
-  "\$CODEX_ACCOUNTS_ROOT/bin/codex-account" "$account" "\$@"
+codex-with() {
+  "\$CODEX_ACCOUNTS_ROOT/bin/codex-with" "\$@"
 }
-
-codex-login-$suffix() {
-  "\$CODEX_ACCOUNTS_ROOT/bin/codex-login" "$account" "\$@"
-}
-
-codex-status-$suffix() {
-  "\$CODEX_ACCOUNTS_ROOT/bin/codex-status" "$account"
-}
-
-codex-logout-$suffix() {
-  "\$CODEX_ACCOUNTS_ROOT/bin/codex-logout" "$account"
-}
-
-codex-app-$suffix() {
-  "\$CODEX_ACCOUNTS_ROOT/bin/codex-app" "$account" "\$@"
-}
-
 EOF
-    done < "$ACCOUNTS_FILE"
-  } > "$ROOT/codex-accounts.zsh"
 }
 
 append_zshrc_if_needed() {
   local zshrc_path="$HOME/.zshrc"
-  local source_line="source $ROOT/codex-accounts.zsh"
+  local source_line="source $ROOT/codex-with.zsh"
 
   if [[ ! -e "$zshrc_path" ]]; then
-    printf '# Codex 多账号入口\n%s\n' "$source_line" >> "$zshrc_path"
+    printf '# Codex 单命令入口\n%s\n' "$source_line" >> "$zshrc_path"
     return
   fi
 
@@ -223,7 +220,7 @@ append_zshrc_if_needed() {
     return
   fi
 
-  printf '\n# Codex 多账号入口\n%s\n' "$source_line" >> "$zshrc_path"
+  printf '\n# Codex 单命令入口\n%s\n' "$source_line" >> "$zshrc_path"
 }
 
 for spec in "$@"; do
@@ -251,19 +248,9 @@ for spec in "$@"; do
   write_placeholder_config "$ROOT/$account/config.toml"
 done
 
-write_script_codex_account
-write_script_codex_login
-write_script_simple_passthrough "codex-status" "login status"
-write_script_simple_passthrough "codex-logout" "logout"
-write_script_simple_passthrough "codex-app" "app"
+write_codex_with_script
+chmod +x "$ROOT/bin/codex-with"
 write_zsh_loader
-
-chmod +x \
-  "$ROOT/bin/codex-account" \
-  "$ROOT/bin/codex-login" \
-  "$ROOT/bin/codex-status" \
-  "$ROOT/bin/codex-logout" \
-  "$ROOT/bin/codex-app"
 
 if [[ "$APPEND_ZSHRC" -eq 1 ]]; then
   append_zshrc_if_needed

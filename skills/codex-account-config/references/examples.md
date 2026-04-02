@@ -15,55 +15,61 @@
 ├── Official/
 │   └── config.toml
 ├── bin/
-│   ├── codex-account
-│   ├── codex-app
-│   ├── codex-login
-│   ├── codex-logout
-│   └── codex-status
+│   └── codex-with
 ├── accounts.tsv
-└── codex-accounts.zsh
+└── codex-with.zsh
 ```
 
 ## 登录映射
 
-- `packycode:api` -> `codex-login-packycode` 读取 `OPENAI_API_KEY_PACKYCODE`
-- `codexzh:api` -> `codex-login-codexzh` 读取 `OPENAI_API_KEY_CODEXZH`
-- `Official:official` -> `codex-login-official` 执行标准 `codex login`
+- `packycode:api` -> `codex-with packycode -login`，读取 `OPENAI_API_KEY_PACKYCODE`
+- `codexzh:api` -> `codex-with codexzh -login`，读取 `OPENAI_API_KEY_CODEXZH`
+- `Official:official` -> `codex-with Official -login`，执行标准 `codex login`
 
 ## 常见后续命令
 
 macOS / Linux：
 
 ```zsh
-source /Users/name/Desktop/codex-accounts/codex-accounts.zsh
+source /Users/name/Desktop/codex-accounts/codex-with.zsh
 
 export OPENAI_API_KEY_PACKYCODE="sk-..."
 export OPENAI_API_KEY_CODEXZH="sk-..."
 
-codex-login-packycode
-codex-login-codexzh
-codex-login-official
+codex-with -list
+codex-with packycode -login
+codex-with codexzh -login
+codex-with Official -login
 
-codex-packycode
-codex-codexzh
-codex-official
+codex-with packycode
+codex-with codexzh
+codex-with Official
+
+codex-with packycode -status
+codex-with Official -app
+codex-with -help
 ```
 
 Windows PowerShell：
 
 ```powershell
-. C:\Users\name\Desktop\codex-accounts\codex-accounts.ps1
+. C:\Users\name\Desktop\codex-accounts\codex-with.ps1
 
 $env:OPENAI_API_KEY_PACKYCODE = "sk-..."
 $env:OPENAI_API_KEY_CODEXZH = "sk-..."
 
-codex-login-packycode
-codex-login-codexzh
-codex-login-official
+codex-with -list
+codex-with packycode -login
+codex-with codexzh -login
+codex-with Official -login
 
-codex-packycode
-codex-codexzh
-codex-official
+codex-with packycode
+codex-with codexzh
+codex-with Official
+
+codex-with packycode -status
+codex-with Official -app
+codex-with -help
 ```
 
 ## 从 cc-switch 导入
@@ -102,13 +108,13 @@ python3 ~/.codex/skills/codex-account-config/scripts/import_cc_switch_codex.py \
 - 根目录是不是 `/Users/name/Desktop/codex-accounts`
 - 是导入全部 provider，还是只导入指定 provider
 - 是否连同 MCP 配置一起导入
-- 是否把 shell 入口追加到 `~/.zshrc`
+- 是否把 shell 入口写入 shell profile
 
 ## 冲突说明
 
 这些独立账号根目录不会替代默认的 `~/.codex`。
 
-- `codex-packycode` 会把对应账号目录作为 `CODEX_HOME`
-- `codex-codexzh` 使用它自己的 `CODEX_HOME`
-- `codex-official` 使用它自己的 `CODEX_HOME`
+- `codex-with packycode` 会把对应账号目录作为 `CODEX_HOME`
+- `codex-with codexzh` 使用它自己的 `CODEX_HOME`
+- `codex-with Official` 使用它自己的 `CODEX_HOME`
 - 裸命令 `codex` 仍然使用默认的 `~/.codex`
