@@ -19,7 +19,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node ./bin/c-skills.js --help"
+    "test": "node --test"
   },
   "keywords": [
     "codex",
