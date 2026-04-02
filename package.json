@@ -4,7 +4,7 @@
   "description": "Install Codex skills from GitHub repositories via npx.",
   "license": "MIT",
   "bin": {
-    "c-skills": "./bin/c-skills.js"
+    "c-skills": "bin/c-skills.js"
   },
   "files": [
     "bin",
