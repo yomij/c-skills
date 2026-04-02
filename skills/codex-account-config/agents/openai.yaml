@@ -1,0 +1,7 @@
+interface:
+  display_name: "Codex 账号配置"
+  short_description: "配置隔离的多账号 Codex 环境"
+  default_prompt: "使用 $codex-account-config 创建或更新隔离的多账号 Codex 配置和 shell 入口。"
+
+policy:
+  allow_implicit_invocation: true

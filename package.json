@@ -11,6 +11,9 @@
     "lib",
     "README.md"
   ],
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org"
+  },
   "engines": {
     "node": ">=18"
   },
