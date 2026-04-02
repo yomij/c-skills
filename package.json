@@ -1,0 +1,27 @@
+{
+  "name": "c-skills",
+  "version": "0.1.0",
+  "description": "Install Codex skills from GitHub repositories via npx.",
+  "license": "MIT",
+  "bin": {
+    "c-skills": "./bin/c-skills.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node ./bin/c-skills.js --help"
+  },
+  "keywords": [
+    "codex",
+    "skills",
+    "cli",
+    "npx",
+    "github"
+  ]
+}
