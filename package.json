@@ -1,7 +1,7 @@
 {
   "name": "c-skills",
-  "version": "0.1.0",
-  "description": "Install Codex skills from GitHub repositories via npx.",
+  "version": "0.2.0",
+  "description": "Install bundled Codex skills or fetch them from GitHub via npx.",
   "license": "MIT",
   "bin": {
     "c-skills": "bin/c-skills.js"
@@ -9,6 +9,7 @@
   "files": [
     "bin",
     "lib",
+    "skills",
     "README.md"
   ],
   "publishConfig": {
