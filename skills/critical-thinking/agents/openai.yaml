@@ -1,0 +1,4 @@
+interface:
+  display_name: "Critical Thinking"
+  short_description: "面向需求评审、代码开发与用户讨论的批判性思维辅助工具"
+  default_prompt: "Use $critical-thinking to review this requirement, code change, or discussion by checking the conclusion, evidence, assumptions, biases, and next-step risks."
