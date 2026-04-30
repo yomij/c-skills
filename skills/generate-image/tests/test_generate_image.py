@@ -21,6 +21,7 @@ DEFAULT_CONFIG_TEMPLATE = (
 )
 SKILL_ROOT_TEMPLATE = "<host-root>/skills/generate-image"
 SCRIPT_PATH_TEMPLATE = "<installed-skill-root>/scripts/generate_image.py"
+GENERATE_IMAGE_ENV_KEYS = ("GENERATE_IMAGE_CONFIG", "GENERATE_IMAGE_HOME")
 
 
 class GenerateImageScriptTests(unittest.TestCase):
@@ -32,20 +33,30 @@ class GenerateImageScriptTests(unittest.TestCase):
         env=None,
         check: bool = True,
     ):
-        process_env = dict(os.environ)
-        for key in ("API_KEY", "api_key", "BASE_URL", "base_url", "MODEL", "model"):
-            process_env.pop(key, None)
-        if env:
-            process_env.update(env)
-
         return subprocess.run(
             [sys.executable, str(SCRIPT_PATH), *args],
             cwd=cwd,
             capture_output=True,
-            env=process_env,
+            env=self.isolated_script_env(env),
             text=True,
             check=check,
         )
+
+    def isolated_script_env(self, env=None):
+        process_env = dict(os.environ)
+        for key in (
+            "API_KEY",
+            "api_key",
+            "BASE_URL",
+            "base_url",
+            "MODEL",
+            "model",
+            *GENERATE_IMAGE_ENV_KEYS,
+        ):
+            process_env.pop(key, None)
+        if env:
+            process_env.update(env)
+        return process_env
 
     def run_dry_run(self) -> dict:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -64,11 +75,15 @@ class GenerateImageScriptTests(unittest.TestCase):
         return json.loads(result.stdout)
 
     def load_script_module(self):
-        spec = importlib.util.spec_from_file_location("generate_image", SCRIPT_PATH)
-        assert spec is not None
-        module = importlib.util.module_from_spec(spec)
-        assert spec.loader is not None
-        spec.loader.exec_module(module)
+        with mock.patch.dict(os.environ, {}, clear=False):
+            for key in GENERATE_IMAGE_ENV_KEYS:
+                os.environ.pop(key, None)
+
+            spec = importlib.util.spec_from_file_location("generate_image", SCRIPT_PATH)
+            assert spec is not None
+            module = importlib.util.module_from_spec(spec)
+            assert spec.loader is not None
+            spec.loader.exec_module(module)
         return module
 
     def test_default_responses_model_is_mainline_model(self) -> None:
@@ -96,7 +111,11 @@ class GenerateImageScriptTests(unittest.TestCase):
     def test_run_command_isolates_generate_image_environment_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             external_config = str(Path(tmpdir) / "external-config.json")
-            with mock.patch.dict(os.environ, {"GENERATE_IMAGE_CONFIG": external_config}):
+            external_home = str(Path(tmpdir) / "external-home")
+            with mock.patch.dict(
+                os.environ,
+                {"GENERATE_IMAGE_CONFIG": external_config, "GENERATE_IMAGE_HOME": external_home},
+            ):
                 result = self.run_command(
                     ["--prompt", "test prompt", "--api-key", "dummy", "--dry-run"],
                     cwd=tmpdir,
@@ -108,7 +127,11 @@ class GenerateImageScriptTests(unittest.TestCase):
     def test_load_script_module_isolates_generate_image_environment_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             external_config = str(Path(tmpdir) / "external-config.json")
-            with mock.patch.dict(os.environ, {"GENERATE_IMAGE_CONFIG": external_config}):
+            external_home = str(Path(tmpdir) / "external-home")
+            with mock.patch.dict(
+                os.environ,
+                {"GENERATE_IMAGE_CONFIG": external_config, "GENERATE_IMAGE_HOME": external_home},
+            ):
                 module = self.load_script_module()
 
         self.assertEqual(module.DEFAULT_CONFIG_PATH, str(DEFAULT_CONFIG_PATH))
@@ -193,6 +216,7 @@ class GenerateImageScriptTests(unittest.TestCase):
                 ],
                 cwd=tmpdir,
                 capture_output=True,
+                env=self.isolated_script_env(),
                 text=True,
                 check=True,
             )
