@@ -1,0 +1,4 @@
+interface:
+  display_name: "Generate Image"
+  short_description: "Clarify prompts and generate images"
+  default_prompt: "Use $generate-image to generate an image from this idea: a refined poster of a quiet workspace at sunrise."

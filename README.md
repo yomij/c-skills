@@ -2,8 +2,8 @@
 
 这个仓库同时承担两件事：
 
-1. 存放对外发布的 Codex skills，目录约定为 `skills/<skill-name>/`
-2. 提供一个可发布到 npm 的 CLI，使使用者既可以安装 npm 包内置 skill，也可以从 GitHub 仓库拉取 skill
+1. 存放对外发布的 agent skills，目录约定为 `skills/<skill-name>/`
+2. 提供一个可发布到 npm 的 CLI，使使用者既可以安装 npm 包内置 skill，也可以从 GitHub 仓库拉取 skill，并安装到 Codex 或 Claude Code
 
 ## 目录约定
 
@@ -28,9 +28,16 @@ GitHub 模式通过 `git sparse-checkout` 拉取单个 skill 目录，因此使�
 
 当前 CLI 支持三种安装目标：
 
-- 全局安装：默认安装到 `CODEX_HOME/skills`，若未设置 `CODEX_HOME` 则为 `~/.codex/skills`
-- 项目安装：安装到当前目录下的 `.codex/skills`
+- 全局安装：按 `--host` 安装到对应全局目录
+- 项目安装：按 `--host` 安装到当前目录下的 `.codex/skills` 或 `.claude/skills`
 - 自定义目录：通过 `--dest <dir>` 显式指定
+
+宿主默认目录：
+
+- `--host codex`：`CODEX_HOME/skills`，若未设置 `CODEX_HOME` 则为 `~/.codex/skills`
+- `--host claude`：`~/.claude/skills`
+
+`--host` 默认为 `codex`，以兼容现有用法。
 
 ### 安装包内置 skill
 
@@ -44,45 +51,52 @@ npx c-skills list
 
 ```bash
 npx c-skills codex-account-config
+npx c-skills generate-image --host claude
 ```
 
 安装到当前项目：
 
 ```bash
 npx c-skills codex-account-config --project
+npx c-skills generate-image --project --host claude
 ```
 
 或者：
 
 ```bash
 npx c-skills install codex-account-config
+npx c-skills install generate-image --host claude
 ```
 
 ### 从 GitHub 安装 skill
 
 ```bash
 npx c-skills your-org/c-skills skills/your-skill
+npx c-skills your-org/c-skills skills/your-skill --host claude
 ```
 
 或者直接传 GitHub URL：
 
 ```bash
 npx c-skills https://github.com/your-org/c-skills/tree/main/skills/your-skill
+npx c-skills https://github.com/your-org/c-skills/tree/main/skills/your-skill --host claude
 ```
 
 也可以显式写成 `install` 子命令：
 
 ```bash
 npx c-skills install --repo your-org/c-skills --path skills/your-skill --ref main
+npx c-skills install --repo your-org/c-skills --path skills/your-skill --ref main --host claude
 ```
 
 安装到当前项目：
 
 ```bash
 npx c-skills install --repo your-org/c-skills --path skills/your-skill --ref main --project
+npx c-skills install --repo your-org/c-skills --path skills/your-skill --ref main --project --host claude
 ```
 
-安装完成后需要重启 Codex。
+安装完成后需要重启对应宿主（Codex 或 Claude Code）。
 
 ### Windows PowerShell
 
@@ -90,12 +104,14 @@ npx c-skills install --repo your-org/c-skills --path skills/your-skill --ref mai
 
 ```powershell
 npx c-skills codex-account-config
+npx c-skills generate-image --host claude
 ```
 
 安装到当前项目：
 
 ```powershell
 npx c-skills codex-account-config --project
+npx c-skills generate-image --project --host claude
 ```
 
 从 GitHub 安装 skill：
@@ -103,12 +119,14 @@ npx c-skills codex-account-config --project
 ```powershell
 npx c-skills your-org/c-skills skills/your-skill
 npx c-skills your-org/c-skills skills/your-skill --project
+npx c-skills your-org/c-skills skills/your-skill --host claude
 ```
 
 或者：
 
 ```powershell
 npx c-skills https://github.com/your-org/c-skills/tree/main/skills/your-skill
+npx c-skills https://github.com/your-org/c-skills/tree/main/skills/your-skill --host claude
 ```
 
 ## 发布这个 CLI
@@ -129,5 +147,6 @@ node ./bin/c-skills.js --help
 node ./bin/c-skills.js list
 node ./bin/c-skills.js codex-account-config --dry-run
 node ./bin/c-skills.js codex-account-config --project --dry-run
+node ./bin/c-skills.js generate-image --host claude --dry-run
 node ./bin/c-skills.js your-org/c-skills skills/your-skill --dry-run
 ```

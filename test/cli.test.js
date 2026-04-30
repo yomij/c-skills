@@ -20,6 +20,20 @@ test('parses explicit global scope for GitHub installs', () => {
   assert.equal(options.scope, 'global');
 });
 
+test('parses explicit claude host for bundled skill installs', () => {
+  const options = parseInstallArgs(['generate-image', '--host', 'claude']);
+
+  assert.equal(options.skill, 'generate-image');
+  assert.equal(options.host, 'claude');
+});
+
+test('rejects invalid host values', () => {
+  assert.throws(
+    () => parseInstallArgs(['generate-image', '--host', 'gemini']),
+    /Invalid value for --host: gemini\. Use codex or claude\./
+  );
+});
+
 test('rejects mixing --dest with scope flags', () => {
   assert.throws(
     () => parseInstallArgs(['codex-account-config', '--project', '--dest', '/tmp/skills']),

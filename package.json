@@ -1,7 +1,7 @@
 {
   "name": "c-skills",
   "version": "0.2.2",
-  "description": "Install bundled Codex skills or fetch them from GitHub via npx.",
+  "description": "Install bundled Codex or Claude Code skills or fetch them from GitHub via npx.",
   "license": "MIT",
   "bin": {
     "c-skills": "bin/c-skills.js"
@@ -23,6 +23,7 @@
   },
   "keywords": [
     "codex",
+    "claude-code",
     "skills",
     "cli",
     "npx",
