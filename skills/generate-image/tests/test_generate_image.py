@@ -88,6 +88,7 @@ class GenerateImageScriptTests(unittest.TestCase):
 
     def test_default_responses_model_is_mainline_model(self) -> None:
         payload = self.run_dry_run()
+        self.assertEqual(payload["mode"], "generate")
         self.assertEqual(payload["response_model"], "gpt-5.5")
         self.assertEqual(payload["image_model"], "gpt-image-2")
         self.assertEqual(payload["request_body"]["model"], "gpt-5.5")
@@ -383,6 +384,172 @@ class GenerateImageScriptTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertEqual(payload["request_body"]["tools"][0]["size"], "1536x1024")
 
+    def test_edit_mode_dry_run_uses_images_edits_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "source.png"
+            mask = Path(tmpdir) / "mask.png"
+            source.write_bytes(b"source")
+            mask.write_bytes(b"mask")
+            result = self.run_command(
+                [
+                    "--prompt",
+                    "make it brighter",
+                    "--api-key",
+                    "dummy",
+                    "--image",
+                    "source.png",
+                    "--mask",
+                    str(mask),
+                    "--size",
+                    "1024x1024",
+                    "--quality",
+                    "high",
+                    "--output-format",
+                    "webp",
+                    "--dry-run",
+                ],
+                cwd=tmpdir,
+            )
+
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["mode"], "edit")
+        self.assertEqual(payload["endpoint"], "https://api.xairouter.com/v1/images/edits")
+        self.assertEqual(payload["image_model"], "gpt-image-2")
+        self.assertFalse(payload["stream"])
+        self.assertEqual(payload["image_inputs"], [str(source.resolve())])
+        self.assertEqual(payload["mask"], str(mask.resolve()))
+        self.assertNotIn("request_body", payload)
+        self.assertEqual(
+            payload["multipart"]["fields"],
+            {
+                "model": "gpt-image-2",
+                "prompt": "make it brighter",
+                "response_format": "b64_json",
+                "output_format": "webp",
+                "size": "1024x1024",
+                "quality": "high",
+            },
+        )
+        self.assertEqual(payload["multipart"]["files"][0]["field"], "image")
+        self.assertEqual(payload["multipart"]["files"][0]["content_type"], "image/png")
+        self.assertEqual(payload["multipart"]["files"][1]["field"], "mask")
+
+    def test_edit_mode_multiple_images_use_reference_array_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            first = Path(tmpdir) / "first.png"
+            second = Path(tmpdir) / "second.jpg"
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+            result = self.run_command(
+                [
+                    "--prompt",
+                    "combine references",
+                    "--api-key",
+                    "dummy",
+                    "--image",
+                    str(first),
+                    "--image",
+                    str(second),
+                    "--dry-run",
+                ],
+                cwd=tmpdir,
+            )
+
+        payload = json.loads(result.stdout)
+        files = payload["multipart"]["files"]
+        self.assertEqual([file_part["field"] for file_part in files], ["image[]", "image[]"])
+        self.assertEqual([file_part["path"] for file_part in files], [str(first.resolve()), str(second.resolve())])
+        self.assertEqual(files[1]["content_type"], "image/jpeg")
+
+    def test_multipart_encoder_includes_edit_fields_and_file_bytes(self) -> None:
+        module = self.load_script_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "source.png"
+            source.write_bytes(b"source-bytes")
+            files = [module.build_multipart_file("image", source)]
+            body, content_type = module.encode_multipart_form_data(
+                {
+                    "model": "gpt-image-2",
+                    "prompt": "make it brighter",
+                },
+                files,
+            )
+
+        self.assertIn("multipart/form-data; boundary=----generate-image-", content_type)
+        self.assertIn(b'name="model"\r\n\r\ngpt-image-2', body)
+        self.assertIn(b'name="prompt"\r\n\r\nmake it brighter', body)
+        self.assertIn(b'name="image"; filename="source.png"', body)
+        self.assertIn(b"Content-Type: image/png", body)
+        self.assertIn(b"source-bytes", body)
+
+    def test_mask_requires_image_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = self.run_command(
+                [
+                    "--prompt",
+                    "edit masked area",
+                    "--api-key",
+                    "dummy",
+                    "--mask",
+                    "mask.png",
+                    "--dry-run",
+                ],
+                cwd=tmpdir,
+                check=False,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--mask requires at least one --image", result.stderr)
+
+    def test_partial_images_are_not_supported_in_edit_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = self.run_command(
+                [
+                    "--prompt",
+                    "edit this image",
+                    "--api-key",
+                    "dummy",
+                    "--image",
+                    "source.png",
+                    "--partial-images",
+                    "2",
+                    "--dry-run",
+                ],
+                cwd=tmpdir,
+                check=False,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--partial-images is only supported for text generation mode", result.stderr)
+
+    def test_images_edit_response_extracts_b64_and_saves_requested_format(self) -> None:
+        module = self.load_script_module()
+        image = module.extract_images_api_result(
+            {
+                "data": [
+                    {
+                        "b64_json": "aGVsbG8=",
+                        "revised_prompt": "brighter result",
+                    }
+                ]
+            }
+        )
+
+        self.assertEqual(image["image_base64"], "aGVsbG8=")
+        self.assertEqual(image["revised_prompt"], "brighter result")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            saved_to = module.save_image(
+                image["image_base64"],
+                "generated",
+                "gpt-image-2",
+                output_format="jpeg",
+                base_dir=Path(tmpdir),
+            )
+            saved_bytes = saved_to.read_bytes()
+
+        self.assertEqual(saved_to.suffix, ".jpeg")
+        self.assertEqual(saved_bytes, b"hello")
+
     def test_tool_choice_can_force_image_generation(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             result = self.run_command(
@@ -449,6 +616,8 @@ class GenerateImageScriptTests(unittest.TestCase):
         self.assertIn("generate-image/config.json", result.stdout)
         self.assertIn("--response-model", result.stdout)
         self.assertIn("--image-model", result.stdout)
+        self.assertIn("--image", result.stdout)
+        self.assertIn("--mask", result.stdout)
         self.assertIn("--tool-choice", result.stdout)
         self.assertIn("--partial-images", result.stdout)
         self.assertIn("--no-stream", result.stdout)

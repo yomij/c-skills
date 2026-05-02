@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Generate an image with a responses endpoint and image_generation tool."""
+"""Generate or edit an image with provider-compatible image endpoints."""
 
 from __future__ import annotations
 
 import argparse
 import base64
 import json
+import mimetypes
 import os
 import re
 import sys
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
@@ -25,8 +27,8 @@ DEFAULT_STREAM = True
 DEFAULT_TIMEOUT_SECONDS = 600
 UNSUPPORTED_PREVIOUS_RESPONSE_ID_MESSAGE = (
     "previous_response_id is not supported by this image-generation API path. "
-    "Generate a new text-only variant, or switch to an existing-image editing workflow "
-    "when exact image continuation is required."
+    "Generate a new prompt-only variant, or pass --image <saved_to> when exact image "
+    "continuation is required."
 )
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 
@@ -98,6 +100,17 @@ def main() -> int:
             print_error(UNSUPPORTED_PREVIOUS_RESPONSE_ID_MESSAGE)
             return 2
 
+        edit_mode = bool(args.image)
+        if args.mask and not edit_mode:
+            print_error("--mask requires at least one --image.")
+            return 2
+        if edit_mode and args.partial_images is not None:
+            print_error(
+                "--partial-images is only supported for text generation mode. "
+                "Remove --partial-images when using --image."
+            )
+            return 2
+
         api_key = config_value(args, config, "api_key", "")
         if not api_key:
             print_error(
@@ -118,8 +131,86 @@ def main() -> int:
         )
         output_dir = config_value(args, config, "output_dir", DEFAULT_OUTPUT_DIR)
         output_format = config_value(args, config, "output_format", DEFAULT_OUTPUT_FORMAT)
-        stream = config_bool_value(args, config, "stream", DEFAULT_STREAM)
         timeout_seconds = config_int_value(args, config, "timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
+        image_inputs = resolve_input_paths(
+            args.image or [],
+            label="Input image",
+            require_exists=not args.dry_run,
+        )
+        mask_path = (
+            resolve_input_path(args.mask, label="Mask", require_exists=not args.dry_run)
+            if args.mask
+            else None
+        )
+
+        if edit_mode:
+            fields = build_images_edit_fields(
+                args,
+                config,
+                image_model=image_model,
+                prompt=prompt,
+                output_format=output_format,
+            )
+            files = build_images_edit_files(image_inputs, mask_path)
+
+            if args.dry_run:
+                print(
+                    json.dumps(
+                        {
+                            "dry_run": True,
+                            "config": str(config_path.resolve()),
+                            "mode": "edit",
+                            "base_url": base_url,
+                            "endpoint": f"{base_url}/images/edits",
+                            "image_model": image_model,
+                            "stream": False,
+                            "output_dir": str(resolve_output_dir(output_dir)),
+                            "image_inputs": [str(path) for path in image_inputs],
+                            "mask": str(mask_path) if mask_path else None,
+                            "multipart": summarize_multipart(fields, files),
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+                return 0
+
+            response_json = post_images_edit_api(
+                base_url,
+                api_key,
+                fields,
+                files,
+                timeout_seconds=timeout_seconds,
+            )
+            image = extract_images_api_result(response_json)
+            if image is None:
+                print_error("No image payload found in the response.", {"response": response_json})
+                return 1
+
+            saved_to = save_image(
+                image["image_base64"],
+                output_dir,
+                image_model,
+                output_format=output_format,
+            )
+            output = {
+                "mode": "edit",
+                "saved_to": str(saved_to),
+                "markdown": f"![Generated image]({saved_to})",
+                "revised_prompt": image.get("revised_prompt"),
+                "image_model": image_model,
+                "stream": False,
+                "image_inputs": [str(path) for path in image_inputs],
+            }
+            if mask_path:
+                output["mask"] = str(mask_path)
+            if args.raw_json:
+                output["raw_response"] = response_json
+
+            print(json.dumps(output, ensure_ascii=False, indent=2))
+            return 0
+
+        stream = config_bool_value(args, config, "stream", DEFAULT_STREAM)
         body = build_request_body(
             args,
             config,
@@ -135,6 +226,7 @@ def main() -> int:
                     {
                         "dry_run": True,
                         "config": str(config_path.resolve()),
+                        "mode": "generate",
                         "base_url": base_url,
                         "endpoint": f"{base_url}/responses",
                         "response_model": response_model,
@@ -196,6 +288,7 @@ def main() -> int:
                     )
                 )
         output = {
+            "mode": "generate",
             "saved_to": str(saved_to),
             "markdown": f"![Generated image]({saved_to})",
             "response_id": image.get("response_id") or (response_json or {}).get("id"),
@@ -224,7 +317,7 @@ def main() -> int:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate an image from a text prompt.")
+    parser = argparse.ArgumentParser(description="Generate or edit an image from a text prompt.")
     prompt_group = parser.add_mutually_exclusive_group(required=True)
     prompt_group.add_argument("--prompt", help="Text prompt to generate from.")
     prompt_group.add_argument("--prompt-file", help="File containing the prompt.")
@@ -237,17 +330,23 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--api-key", help="Provider API key. Prefer config.json for repeated use.")
-    parser.add_argument("--base-url", help="Base URL for the responses endpoint.")
+    parser.add_argument("--base-url", help="Provider API base URL.")
     parser.add_argument("--response-model", help="Main responses model used for orchestration.")
     parser.add_argument("--image-model", "--model", dest="image_model", help="Image generation model name.")
-    parser.add_argument("--output-dir", help="Directory for PNG output.")
+    parser.add_argument("--output-dir", help="Directory for image output.")
+    parser.add_argument(
+        "--image",
+        action="append",
+        help="Local input image for edit mode. Repeat for multiple reference images.",
+    )
+    parser.add_argument("--mask", help="Optional local mask image for edit mode.")
     parser.add_argument(
         "--previous-response-id",
         help="Unsupported on the current image-generation API path; accepted only to return a clear error.",
     )
-    parser.add_argument("--size", help="Optional image size passed to the image_generation tool.")
-    parser.add_argument("--quality", help="Optional image quality passed to the image_generation tool.")
-    parser.add_argument("--background", help="Optional background mode passed to the image_generation tool.")
+    parser.add_argument("--size", help="Optional image size passed to the selected image endpoint.")
+    parser.add_argument("--quality", help="Optional image quality passed to the selected image endpoint.")
+    parser.add_argument("--background", help="Optional background mode passed to the selected image endpoint.")
     parser.add_argument("--output-format", choices=("png", "jpeg", "webp"), help="Image output format.")
     parser.add_argument("--output-compression", type=int, help="Compression level for jpeg/webp output.")
     parser.add_argument("--partial-images", type=int, help="Number of streamed preview images to request.")
@@ -395,6 +494,33 @@ def read_prompt(args: argparse.Namespace) -> str:
     return Path(args.prompt_file).expanduser().read_text(encoding="utf-8").strip()
 
 
+def resolve_input_paths(
+    values: list[str],
+    *,
+    label: str,
+    require_exists: bool,
+) -> list[Path]:
+    return [
+        resolve_input_path(value, label=f"{label} {index + 1}", require_exists=require_exists)
+        for index, value in enumerate(values)
+    ]
+
+
+def resolve_input_path(value: str, *, label: str, require_exists: bool) -> Path:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    path = path.resolve()
+
+    if require_exists:
+        if not path.exists():
+            raise ValueError(f"{label} file not found: {path}")
+        if not path.is_file():
+            raise ValueError(f"{label} must be a file: {path}")
+
+    return path
+
+
 def build_request_body(
     args: argparse.Namespace,
     config: dict[str, Any],
@@ -443,10 +569,139 @@ def build_request_body(
     return body
 
 
+def build_images_edit_fields(
+    args: argparse.Namespace,
+    config: dict[str, Any],
+    *,
+    image_model: str,
+    prompt: str,
+    output_format: str,
+) -> dict[str, str]:
+    fields = {
+        "model": image_model,
+        "prompt": prompt,
+        "response_format": "b64_json",
+        "output_format": output_format,
+    }
+    if args.size:
+        fields["size"] = args.size
+
+    for field in ("quality", "background"):
+        value = config_value(args, config, field, "")
+        if value:
+            fields[field] = value
+
+    output_compression = config_int_value(args, config, "output_compression", None)
+    if output_compression is not None:
+        fields["output_compression"] = str(output_compression)
+
+    return fields
+
+
+def build_images_edit_files(image_inputs: list[Path], mask_path: Path | None) -> list[dict[str, Any]]:
+    image_field_name = "image" if len(image_inputs) == 1 else "image[]"
+    files = [build_multipart_file(image_field_name, path) for path in image_inputs]
+    if mask_path is not None:
+        files.append(build_multipart_file("mask", mask_path))
+    return files
+
+
+def build_multipart_file(field: str, path: Path) -> dict[str, Any]:
+    content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    return {
+        "field": field,
+        "path": path,
+        "filename": path.name,
+        "content_type": content_type,
+    }
+
+
+def summarize_multipart(fields: dict[str, str], files: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "fields": fields,
+        "files": [
+            {
+                "field": file_part["field"],
+                "path": str(file_part["path"]),
+                "filename": file_part["filename"],
+                "content_type": file_part["content_type"],
+            }
+            for file_part in files
+        ],
+    }
+
+
 def normalize_tool_choice(tool_choice: str) -> dict[str, str] | None:
     if tool_choice == "image_generation":
         return {"type": "image_generation"}
     return None
+
+
+def post_images_edit_api(
+    base_url: str,
+    api_key: str,
+    fields: dict[str, str],
+    files: list[dict[str, Any]],
+    *,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    data, content_type = encode_multipart_form_data(fields, files)
+    request = Request(
+        f"{base_url}/images/edits",
+        data=data,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": content_type,
+        },
+        method="POST",
+    )
+    with urlopen(request, timeout=timeout_seconds) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def encode_multipart_form_data(
+    fields: dict[str, str],
+    files: list[dict[str, Any]],
+) -> tuple[bytes, str]:
+    boundary = f"----generate-image-{uuid.uuid4().hex}"
+    chunks: list[bytes] = []
+
+    for name, value in fields.items():
+        append_multipart_line(chunks, f"--{boundary}")
+        append_multipart_line(
+            chunks,
+            f'Content-Disposition: form-data; name="{escape_multipart_header_value(name)}"',
+        )
+        append_multipart_line(chunks, "")
+        append_multipart_line(chunks, value)
+
+    for file_part in files:
+        path = file_part["path"]
+        append_multipart_line(chunks, f"--{boundary}")
+        append_multipart_line(
+            chunks,
+            (
+                'Content-Disposition: form-data; '
+                f'name="{escape_multipart_header_value(file_part["field"])}"; '
+                f'filename="{escape_multipart_header_value(file_part["filename"])}"'
+            ),
+        )
+        append_multipart_line(chunks, f"Content-Type: {file_part['content_type']}")
+        append_multipart_line(chunks, "")
+        chunks.append(path.read_bytes())
+        chunks.append(b"\r\n")
+
+    append_multipart_line(chunks, f"--{boundary}--")
+    return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
+
+
+def append_multipart_line(chunks: list[bytes], value: str) -> None:
+    chunks.append(value.encode("utf-8"))
+    chunks.append(b"\r\n")
+
+
+def escape_multipart_header_value(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\r", "").replace("\n", "")
 
 
 def post_responses_api(
@@ -509,6 +764,27 @@ def extract_image_result(response_json: dict[str, Any]) -> dict[str, Any] | None
             "action": item.get("action"),
             "partial_images": [],
             "response_id": response_json.get("id"),
+        }
+
+    return None
+
+
+def extract_images_api_result(response_json: dict[str, Any]) -> dict[str, Any] | None:
+    data = response_json.get("data")
+    if not isinstance(data, list):
+        return None
+
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+
+        result = item.get("b64_json")
+        if not isinstance(result, str) or not result:
+            continue
+
+        return {
+            "image_base64": result,
+            "revised_prompt": item.get("revised_prompt"),
         }
 
     return None
@@ -729,8 +1005,8 @@ def extension_for_output_format(output_format: str) -> str:
 def format_url_error(exc: HTTPError | URLError) -> str:
     if isinstance(exc, HTTPError):
         detail = exc.read().decode("utf-8", errors="replace")
-        return f"Responses request failed with HTTP {exc.code}: {detail}"
-    return f"Responses request failed: {exc.reason}"
+        return f"Image request failed with HTTP {exc.code}: {detail}"
+    return f"Image request failed: {exc.reason}"
 
 
 def print_error(message: str, extra: dict[str, Any] | None = None) -> None:
