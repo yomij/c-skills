@@ -24,7 +24,7 @@ Generate or edit a bitmap image from the user's request with the bundled script.
    - Pass `--size` only for the current request when the desired output shape is clear. Do not store `size` in `config.json`.
    - Keep `gpt-5.5` as the orchestration model and `gpt-image-2` as the rendering model unless the user explicitly needs something else.
    - Preserve user-specified text exactly. Do not invent logos, claims, people, or brands unless the user asked for them.
-   - If exact wording matters, especially for UI copy, long headlines, or multilingual text, render text outside the generated image instead of trusting the model to typeset it perfectly.
+   - When visible text is requested, put the exact wording in `Text (verbatim)` and let the image model render it directly in the image by default, including UI copy, headlines, Chinese text, and multilingual text.
    - Do not wait for a second approval after optimizing unless the user explicitly asks to review the prompt first.
 3. Use the installed skill script at `<installed-skill-root>/scripts/generate_image.py`, and run it from the user's current workspace so relative output directories resolve where the user expects.
    - Codex global default: `${CODEX_HOME:-$HOME/.codex}/skills/generate-image/scripts/generate_image.py`
@@ -34,8 +34,7 @@ Generate or edit a bitmap image from the user's request with the bundled script.
 5. Image generation can take a while. Let the command keep running, wait longer before treating it as stuck, and do not kill the process too early.
 6. If the prompt is long or shell-sensitive, put it in a temporary prompt file and pass `--prompt-file`.
 7. Use `--tool-choice image_generation` for text-to-image when the caller is a fixed "generate image" action and should not decide between multiple tools.
-8. Inspect the generated or edited image when possible. Check subject accuracy, style, composition, text fidelity, avoid-list violations, and output shape. If it is clearly wrong, iterate with a single targeted change rather than stacking broad prompt edits.
-9. Return the generated image. If the current platform can render local images, use the absolute-path Markdown image from the script output. If it cannot, output the full absolute path.
+8. Return the generated image. If the current platform can render local images, use the absolute-path Markdown image from the script output. If it cannot, output the full absolute path.
 
 ## Asset Workflow Discipline
 
@@ -47,7 +46,7 @@ Borrow the production discipline from the system `imagegen` skill, but stay with
 - For multiple distinct assets, run one distinct prompt per asset. Do not rely on one vague prompt to produce unrelated deliverables.
 - If the image is meant to be consumed by code or documentation, make sure the final asset path is the path the project will reference, not an incidental temporary location.
 - Use raster generation only when a bitmap is the right artifact. If the user needs an existing SVG/logo system, deterministic diagram, or simple code-native UI graphic, edit the native source instead of creating a generated bitmap.
-- Report the final saved path, the final prompt or prompt set, and any deliberate tradeoff such as text rendered outside the image or transparent-background post-processing.
+- Report the final saved path, the final prompt or prompt set, and any explicit post-processing such as transparent-background processing.
 
 ## Follow-Up Image Changes
 
@@ -318,7 +317,7 @@ revised_prompt=Optional prompt returned by the image editing endpoint.
 - Do not bypass the installed `generate_image.py`; it follows the required `/responses` + `image_generation` and `/images/edits` logic.
 - Do not disable stream by default for text-to-image; the current best path is to stream and request `partial_images` only when previews are useful.
 - Do not request `partial_images` with `--image`; edits are synchronous in this script.
-- Do not assume the model will render exact UI copy, Chinese copy, or dense typography perfectly; render text outside the generated image when fidelity matters.
+- Do not weaken requested visible text into a placeholder or layout note by default. Keep requested typography in the prompt and let the model render it directly in the image by default.
 - Do not ask for a transparent background by reflex; treat transparent background as an explicit request with chroma-key or model-support tradeoffs.
 - Do not leave a project-bound asset only in an incidental or temporary location; return the final path that the project should reference.
 - Do not use `--previous-response-id` for image continuation on the current API path; pass the previous local `saved_to` file as `--image`.

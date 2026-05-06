@@ -648,7 +648,7 @@ class GenerateImageScriptTests(unittest.TestCase):
         self.assertIn("Image generation can take a while", content)
         self.assertIn("do not kill the process too early", content)
 
-    def test_skill_instructions_cover_streaming_tool_model_and_rendering_limits(self) -> None:
+    def test_skill_instructions_cover_streaming_tool_model_and_text_rendering(self) -> None:
         content = SKILL_PATH.read_text(encoding="utf-8")
         self.assertIn("gpt-5.5", content)
         self.assertIn("gpt-image-2", content)
@@ -656,7 +656,8 @@ class GenerateImageScriptTests(unittest.TestCase):
         self.assertIn("partial_images", content)
         self.assertIn("tool_choice", content)
         self.assertIn("transparent background", content)
-        self.assertIn("render text outside the generated image", content)
+        self.assertIn("let the image model render it directly in the image by default", content)
+        self.assertNotIn("render text outside the generated image", content)
 
     def test_skill_instructions_cover_art_direction_prompting(self) -> None:
         content = SKILL_PATH.read_text(encoding="utf-8")
@@ -673,7 +674,7 @@ class GenerateImageScriptTests(unittest.TestCase):
         content = SKILL_PATH.read_text(encoding="utf-8")
         self.assertIn("Asset Workflow Discipline", content)
         self.assertIn("project-bound", content)
-        self.assertIn("single targeted change", content)
+        self.assertIn("final saved path", content)
         self.assertIn("Prompt Spec Scaffold", content)
         self.assertIn("Use case:", content)
         self.assertIn("Asset type:", content)
